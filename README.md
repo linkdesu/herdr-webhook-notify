@@ -145,8 +145,9 @@ notify_when_focused = true           # false = only background panes
 min_turn_seconds = 0                 # skip short turns
 cooldown_seconds = 5                 # de-duplicate per pane and kind
 blocked_delay_seconds = 10           # wait out a self-approving agent
-quiet_hours = ["22:00-08:00"]        # local time, supports overnight ranges
-quiet_hours_exempt = ["blocked"]     # kinds that ignore quiet hours
+# quiet_hours = []                   # off by default; use phone DND instead
+# quiet_hours = ["22:00-08:00"]      # local time, supports overnight ranges
+# quiet_hours_exempt = ["blocked"]   # kinds that ignore quiet hours
 include_workspaces = []              # * wildcards, case-insensitive
 exclude_workspaces = []
 include_tabs = []
@@ -191,7 +192,7 @@ language = "en"                      # optional per-provider language
 | `min_turn_seconds` | number | `0` | Ignore turns shorter than this many seconds. `0` disables the check. Applies to `done`, `blocked` and `unknown`. |
 | `cooldown_seconds` | number | `5` | Suppress another notification for the same pane and kind inside this window, which collapses repeated `done` events for one pane into one message. Kinds are counted separately, so a completion plus a pane exit (`done` + `exited`) are still two messages. `0` disables. |
 | `blocked_delay_seconds` | number | `10` | Wait this long before reporting a `blocked` pane, then re-check it: if the agent approved its own prompt and moved on, nothing is sent. `0` notifies immediately. |
-| `quiet_hours` | list of `"HH:MM-HH:MM"` | `[]` | Local-time silent window; overnight ranges like `22:00-08:00` work. |
+| `quiet_hours` | list of `"HH:MM-HH:MM"` | `[]` | Local-time silent window; overnight ranges like `22:00-08:00` work. Off by default: keep it empty and let the phone's do-not-disturb decide. |
 | `quiet_hours_exempt` | list | `["blocked"]` | Kinds that ignore `quiet_hours`, so approval requests still reach you at night. |
 | `include_workspaces` | list of globs | `[]` | Only notify for these workspace labels, e.g. `["external-*"]`. Empty means all. |
 | `exclude_workspaces` | list of globs | `[]` | Never notify for these workspace labels. Exclude wins over include. |
@@ -243,6 +244,51 @@ Every provider accepts these three keys:
 
 How to obtain each webhook is documented in [docs/providers.md](docs/providers.md).
 
+### Owner routes
+
+Providers fan every notification out to the same channels. Owner routes do the
+opposite: one webhook per owner, hit only by that owner's sessions. The owner is
+read from the pane's Herdr agent name, so a session is routed when its name is
+`<owner>--<rest>` (`owner` matching `[a-z][a-z0-9]*`), for example `cto--hwn`
+for `[owners.cto]`.
+
+Sessions without the prefix — the ones you start yourself — and sessions whose
+prefix has no table are never sent anywhere by this mechanism. Enabled
+`[providers.*]` keep behaving exactly as before.
+
+```toml
+[owners.cto]
+url = "${CTO_WAKE_URL}"              # from .env, never inline the secret
+header = "${CTO_WAKE_HEADER}"        # one full "Name: value" line, optional
+```
+
+```dotenv
+CTO_WAKE_URL=https://wake.example.test/cto
+CTO_WAKE_HEADER=Authorization: Bearer <token>
+```
+
+The request is a `POST` with this JSON body (all fields are strings):
+
+| field | meaning |
+| --- | --- |
+| `agent` | Herdr agent name, e.g. `cto--hwn` |
+| `owner` | Owner taken from the name, e.g. `cto` |
+| `pane_id` | Pane id, e.g. `wK:p1` |
+| `workspace_id` | Workspace id, e.g. `wK` |
+| `status` | Raw Herdr status of the event (`done`, `idle`, `blocked`, `unknown`, `exited`) |
+| `event` | Notification kind (`done`, `blocked`, `unknown`, `exited`, `test`) |
+| `herdr_event` | Original hook event name, e.g. `pane.agent_status_changed` |
+| `time` | Local ISO 8601 timestamp with offset |
+
+Owner routes obey the same `[notify]` filters as providers, share `[http]`
+timeout and retries, and are not queued when they fail (a wake message
+delivered an event late is worse than a logged failure). On a pane exit the
+agent name captured while the pane was alive is reused, because the agent list
+no longer reports it.
+
+`herdr-webhook-notify.test owner` posts a sample to every owner route, and
+`test owner:cto` narrows it down.
+
 ### Placeholders
 
 Use these in `message.title`, `message.body` and in `generic`'s `body` template:
@@ -286,9 +332,9 @@ small pull request: copy a block in `herdr_webhook_notify/i18n.py`.
 | action | what it does |
 | --- | --- |
 | `herdr-webhook-notify.init` | write the commented starter `config.toml` |
-| `herdr-webhook-notify.test` | send a sample notification to every enabled provider; `python3 run.py test [provider] [kind]` narrows it down |
-| `herdr-webhook-notify.preview` | print the request each provider would send, without sending it |
-| `herdr-webhook-notify.status` | show config path, providers, filters and queue |
+| `herdr-webhook-notify.test` | send a sample notification to every enabled provider and owner route; `python3 run.py test [provider\|owner][:name] [kind]` narrows it down |
+| `herdr-webhook-notify.preview` | print the request each provider and owner route would send, without sending it |
+| `herdr-webhook-notify.status` | show config path, providers, owner routes, filters and queue |
 | `herdr-webhook-notify.mute` / `.resume` | silence or resume without editing config |
 
 Bind one to a key if you like:
@@ -339,7 +385,7 @@ provider's `events` list) if you only care about completions.
 ## Development
 
 ```bash
-python3 -m pytest -q      # 70 tests, no network access required
+python3 -m pytest -q      # 115 tests, no network access required
 python3 -m ruff check .
 ```
 

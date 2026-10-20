@@ -117,8 +117,9 @@ notify_when_focused = true           # false = 只看后台 pane，盯着看时�
 min_turn_seconds = 0                 # 太短的 turn 不通知
 cooldown_seconds = 5                 # 同一 pane 同类型去重
 blocked_delay_seconds = 10           # 先等 auto approve，别误报
-quiet_hours = ["22:00-08:00"]        # 本地时间，支持跨天
-quiet_hours_exempt = ["blocked"]     # 免打扰期间例外
+# quiet_hours = []                   # 默认关闭，免打扰交给手机端
+# quiet_hours = ["22:00-08:00"]      # 本地时间，支持跨天
+# quiet_hours_exempt = ["blocked"]   # 免打扰期间例外
 include_workspaces = []              # 支持 * 通配，大小写不敏感
 exclude_workspaces = []
 include_agents = []
@@ -157,7 +158,7 @@ events = ["blocked"]                 # 可单独覆盖事件范围
 | `min_turn_seconds` | 数字 | `0` | 短于该秒数的 turn 不通知，`0` 表示不限制；只对 `done`/`blocked`/`unknown` 生效。 |
 | `cooldown_seconds` | 数字 | `5` | 同一 pane 同一类型的通知在该时间窗内去重，可以把同一个 pane 重复的 `done` 合并成一条。不同类型分别计时，所以"完成 + pane 退出"（`done` + `exited`）仍然是两条；`0` 表示不去重。 |
 | `blocked_delay_seconds` | 数字 | `10` | `blocked` 先等这么久再通知：等待结束后会重新查一次状态，agent 已经自己放行并继续执行就不发，避免 auto approve 造成的误报；`0` 表示立即通知。 |
-| `quiet_hours` | 列表 | `[]` | 本地时间的免打扰区间，如 `["22:00-08:00"]`，支持跨天。 |
+| `quiet_hours` | 列表 | `[]` | 本地时间的免打扰区间，如 `["22:00-08:00"]`，支持跨天。默认关闭：留空，交给手机端免打扰。 |
 | `quiet_hours_exempt` | 列表 | `["blocked"]` | 免打扰期间仍然通知的类型，默认让审批/提问能吵醒你。 |
 | `include_workspaces` | 通配列表 | `[]` | 只通知匹配的工作区名，如 `["external-*"]`；空表示全部。 |
 | `exclude_workspaces` | 通配列表 | `[]` | 这些工作区永不通知；排除优先于包含。 |
@@ -209,6 +210,47 @@ events = ["blocked"]                 # 可单独覆盖事件范围
 
 各服务商怎么申请 webhook 见 [docs/providers.md](docs/providers.md)。
 
+### 按会话归属路由（owner routes）
+
+服务商是「所有通知发同一批渠道」，owner 路由相反：每个 owner 一个通用
+webhook，只有属于它的会话才会发。归属按 pane 的 Herdr agent 名判断：名字形如
+`<owner>--<rest>`（owner 匹配 `[a-z][a-z0-9]*`）时，例如 `cto--hwn` 就归
+`[owners.cto]`。
+
+没有前缀的会话（自己平时手开的那些）以及前缀不在表里的会话，这条通路一律不发；
+已启用的 `[providers.*]` 行为完全不变。
+
+```toml
+[owners.cto]
+url = "${CTO_WAKE_URL}"              # 放 .env，别把密钥写进 config.toml
+header = "${CTO_WAKE_HEADER}"        # 完整一行 "Name: value"，可选
+```
+
+```dotenv
+CTO_WAKE_URL=https://wake.example.test/cto
+CTO_WAKE_HEADER=Authorization: Bearer <token>
+```
+
+POST 的 JSON body（全部是字符串）：
+
+| 字段 | 含义 |
+| --- | --- |
+| `agent` | Herdr agent 名，如 `cto--hwn` |
+| `owner` | 从名字里解析出的 owner，如 `cto` |
+| `pane_id` | pane id，如 `wK:p1` |
+| `workspace_id` | workspace id，如 `wK` |
+| `status` | 事件里的原始 Herdr 状态（`done`、`idle`、`blocked`、`unknown`、`exited`） |
+| `event` | 通知类型（`done`、`blocked`、`unknown`、`exited`、`test`） |
+| `herdr_event` | 原始 hook 事件名，如 `pane.agent_status_changed` |
+| `time` | 带时区的本地 ISO 8601 时间 |
+
+owner 路由与服务商共用 `[notify]` 过滤器和 `[http]` 超时/重试；发送失败只记日志、
+不进重试队列（晚到的唤醒消息不如不发）。pane 退出时 agent 列表里已经查不到名字，
+所以沿用 pane 存活期间缓存的名字。
+
+`herdr-webhook-notify.test owner` 会给每个 owner 路由发一条样例，
+`test owner:cto` 只发指定 owner。
+
 ### 可用占位符
 
 在 `message.title`、`message.body` 以及 `generic` 的 `body` 模板里都可以用：
@@ -249,9 +291,9 @@ events = ["blocked"]                 # 可单独覆盖事件范围
 | action | 作用 |
 | --- | --- |
 | `herdr-webhook-notify.init` | 写出带注释的 `config.toml` |
-| `herdr-webhook-notify.test` | 给所有启用的 provider 发一条测试消息；`python3 run.py test [provider] [kind]` 可只测某一个、某一种类型 |
-| `herdr-webhook-notify.preview` | 打印每个 provider 将要发送的请求，但不真的发送 |
-| `herdr-webhook-notify.status` | 显示配置路径、provider、过滤规则和待重投队列 |
+| `herdr-webhook-notify.test` | 给所有启用的 provider 和 owner 路由各发一条测试消息；`python3 run.py test [provider\|owner:名字] [kind]` 可只测某一个、某一种类型 |
+| `herdr-webhook-notify.preview` | 打印每个 provider 和 owner 路由将要发送的请求，但不真的发送 |
+| `herdr-webhook-notify.status` | 显示配置路径、provider、owner 路由、过滤规则和待重投队列 |
 | `herdr-webhook-notify.mute` / `.resume` | 不改配置临时静音 / 恢复 |
 
 ## 可靠性

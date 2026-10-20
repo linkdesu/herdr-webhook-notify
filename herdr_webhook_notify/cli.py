@@ -18,6 +18,7 @@ from . import (
     http,
     i18n,
     markup,
+    owners,
     providers,
     render,
 )
@@ -333,7 +334,7 @@ def cmd_notify(_args) -> int:
     if state.is_disabled():
         log("notifications are silenced, run 'toggle on' to resume")
         return 0
-    if not cfg.enabled:
+    if not cfg.enabled and not cfg.owners:
         for warning in cfg.warnings:
             log(warning)
         return 0
@@ -376,10 +377,17 @@ def cmd_notify(_args) -> int:
         state.forget_pane(pane_id)
 
     fields = collect_fields(pane_id, data, context, entry, entry.get("started_at"), now)
+    # Owner routing needs the Herdr agent name, not the detected agent kind.
+    # A pane that just exited is already gone from the agent list, so fall back
+    # to the name captured while it was alive.
+    owner_agent = ""
+    if cfg.owners:
+        owner_agent = herdr.agent_name(pane_id) or first_str(entry.get("agent_name"))
     if events.status_event(event_name, data):
         state.update_pane(
             pane_id,
             agent=fields["agent"],
+            agent_name=owner_agent or None,
             task=fields["task"],
             workspace=fields["workspace"],
             workspace_id=fields["workspace_id"],
@@ -404,8 +412,26 @@ def cmd_notify(_args) -> int:
             return 0
         state, now = settled
 
-    results = deliver(cfg, decision.kind, decision.status, fields, int(now))
+    owner_results = []
+    if cfg.owners:
+        owner_results = owners.deliver(
+            cfg,
+            decision.kind,
+            decision.status,
+            fields,
+            owner_agent,
+            now,
+            herdr_event=event_name,
+        )
     sent = 0
+    for owner_name, ok, status_code, detail in owner_results:
+        if ok:
+            sent += 1
+            log(f"owner {owner_name}: delivered ({status_code})")
+        else:
+            log(f"owner {owner_name}: failed ({detail})")
+
+    results = deliver(cfg, decision.kind, decision.status, fields, int(now))
     for name, ok, status_code, detail in results:
         if ok:
             sent += 1
@@ -468,22 +494,47 @@ def sample_fields() -> dict:
     }
 
 
+def resolve_target(cfg, target: str):
+    """Map a `test`/`preview` positional onto (providers, owner, error).
+
+    ``owner`` is ``"*"`` for every configured owner, a single owner name, or
+    ``None`` when providers were selected instead.
+    """
+    if not target:
+        return None, None, ""
+    if target == "owner":
+        if not cfg.owners:
+            return None, None, "No owner route is configured, add an [owners.<name>] table"
+        return None, "*", ""
+    if target.startswith("owner:"):
+        name = target.split(":", 1)[1]
+        if name not in cfg.owners:
+            available = ", ".join(sorted(cfg.owners)) or "none"
+            return None, None, f"Unknown owner '{name}'. Available: {available}"
+        return None, name, ""
+    if providers.get(target) is None:
+        return None, None, f"Unknown provider '{target}'. Available: {', '.join(providers.names())}"
+    return {target}, None, ""
+
+
+def owner_sample_agent(owner: str) -> str:
+    return f"{owner}--test"
+
+
 def cmd_test(args) -> int:
     cfg = config_mod.load()
-    if not cfg.enabled:
+    if not cfg.enabled and not cfg.owners:
         out("No provider is enabled yet.")
         out(f"Config file: {config_mod.resolve_path()}")
         out("Run 'init' to write a starter config, then set enabled = true.")
         return 1
 
     positional = [arg for arg in args if not arg.startswith("-")]
-    only = None
+    only, only_owner, error = resolve_target(cfg, positional[0] if positional else "")
+    if error:
+        out(error)
+        return 2
     kind = "test"
-    if positional:
-        only = {positional[0]}
-        if providers.get(positional[0]) is None:
-            out(f"Unknown provider '{positional[0]}'. Available: {', '.join(providers.names())}")
-            return 2
     if len(positional) > 1:
         kind = positional[1]
         allowed = config_mod.SUPPORTED_EVENTS + ("test",)
@@ -492,7 +543,21 @@ def cmd_test(args) -> int:
             return 2
 
     fields = sample_fields()
-    results = deliver(cfg, kind, kind, fields, int(time.time()), only=only, ignore_events=True)
+    now = int(time.time())
+    results = []
+    if only_owner is None:
+        results = deliver(cfg, kind, kind, fields, now, only=only, ignore_events=True)
+
+    owner_results = []
+    if only is None:
+        for owner_name in sorted(cfg.owners):
+            if only_owner not in (None, "*") and owner_name != only_owner:
+                continue
+            agent_name = owner_sample_agent(owner_name)
+            owner_results += owners.deliver(
+                cfg, kind, kind, fields, agent_name, now, "test", only=owner_name
+            )
+
     failures = 0
     for name, ok, status_code, detail in results:
         if ok:
@@ -500,6 +565,12 @@ def cmd_test(args) -> int:
         else:
             failures += 1
             out(f"FAIL {name}: {detail}")
+    for owner_name, ok, status_code, detail in owner_results:
+        if ok:
+            out(f"OK   owner:{owner_name} (HTTP {status_code})")
+        else:
+            failures += 1
+            out(f"FAIL owner:{owner_name}: {detail}")
     return 1 if failures else 0
 
 
@@ -507,26 +578,32 @@ def cmd_test(args) -> int:
 
 
 def cmd_preview(args) -> int:
-    """Print the request each provider would send, without sending anything."""
+    """Print the request each target would send, without sending anything."""
     cfg = config_mod.load()
-    if not cfg.enabled:
+    if not cfg.enabled and not cfg.owners:
         out("No provider is enabled yet.")
         out(f"Config file: {config_mod.resolve_path()}")
         out("Run 'init' to write a starter config, then set enabled = true.")
         return 1
 
     positional = [arg for arg in args if not arg.startswith("-")]
-    only = set(positional) if positional else None
+    targets = [resolve_target(cfg, target) for target in positional]
+    errors = [error for _providers, _owner, error in targets if error]
+    if errors:
+        out(errors[0])
+        return 2
+    owner_selectors = [owner for _providers, owner, _error in targets if owner]
+    only_owner = owner_selectors[0] if owner_selectors else None
+    only = None
     if positional:
-        unknown = [name for name in positional if providers.get(name) is None]
-        if unknown:
-            out(f"Unknown provider '{unknown[0]}'. Available: {', '.join(providers.names())}")
-            return 2
+        only = set()
+        for provider_names, _owner, _error in targets:
+            only |= provider_names or set()
 
     fields = sample_fields()
     now = int(time.time())
     for name in cfg.enabled:
-        if only and name not in only:
+        if only is not None and name not in only:
             continue
         options = cfg.provider_options(name)
         module = providers.get(name)
@@ -548,6 +625,30 @@ def cmd_preview(args) -> int:
         for line in delivery.body.decode("utf-8", "replace").splitlines():
             out(f"    {line}")
         out("")
+
+    if not positional or owner_selectors:
+        timeout = float(cfg.http.get("timeout_seconds", 5))
+        retries = int(cfg.http.get("retries", 1))
+        for owner_name in sorted(cfg.owners):
+            if only_owner not in (None, "*") and owner_name != only_owner:
+                continue
+            options = cfg.owners[owner_name]
+            agent_name = owner_sample_agent(owner_name)
+            body = owners.payload("test", "test", fields, agent_name, owner_name, now, "test")
+            try:
+                delivery = owners.build(owner_name, options, body)
+            except ValueError as exc:
+                out(f"owner:{owner_name}: build failed: {exc}")
+                continue
+            out(f"owner:{owner_name}: {delivery.method} {http.redact(delivery.url)}")
+            out(f"  summary: {delivery.summary} (agent {agent_name})")
+            out(f"  timeout: {timeout:g}s   retries: {retries}")
+            for key, value in sorted(http.redact_headers(delivery.headers).items()):
+                out(f"  {key}: {value}")
+            out("  body:")
+            for line in delivery.body.decode("utf-8", "replace").splitlines():
+                out(f"    {line}")
+            out("")
     return 0
 
 
@@ -632,6 +733,22 @@ def cmd_status(_args) -> int:
             out(f"  - {name} ({module.TITLE}) language={language}{scope} {detail}")
     else:
         out("providers: none enabled")
+
+    if cfg.owners:
+        out("")
+        out("owners:")
+        for name in sorted(cfg.owners):
+            options = cfg.owners[name]
+            try:
+                header = owners.parse_header(options.get("header") or "")
+            except ValueError:
+                header = None
+                header_note = "header needs its ${VAR} set"
+            else:
+                header_note = f"header {header[0]}" if header else "no header"
+            out(f"  - {name} -> {http.redact(options['url'])} ({header_note})")
+    else:
+        out("owners: none")
 
     pending = state.pending_items()
     out("")

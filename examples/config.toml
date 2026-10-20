@@ -31,7 +31,8 @@ cooldown_seconds = 5
 # moved on, nothing is sent. 0 notifies immediately.
 blocked_delay_seconds = 10
 
-# Silent window in local time, for example ["22:00-08:00"]. Empty disables it.
+# Silent window in local time, for example ["22:00-08:00"]. Empty disables it,
+# which is the default: use your phone's do-not-disturb instead.
 # quiet_hours = []
 # quiet_hours_exempt = ["blocked"]
 
@@ -128,3 +129,15 @@ url = "${GENERIC_WEBHOOK_URL}"
 # content_type = "application/json"
 # headers = { Authorization = "Bearer ${GENERIC_TOKEN}" }
 # body = '{"text": "{title}\n{body}"}'
+
+# ---------------------------------------------------------------------------
+# Owner routes. One webhook per owner, hit only by sessions that belong to it.
+#
+# A session belongs to an owner when its Herdr agent name starts with
+# "<owner>--", for example "cto--hwn". Sessions without the prefix, or with a
+# prefix that has no table here, are ignored by these routes. Regular
+# providers above keep working as before.
+#
+# [owners.cto]
+# url = "${CTO_WAKE_URL}"
+# header = "${CTO_WAKE_HEADER}"       # one full "Name: value" line, optional

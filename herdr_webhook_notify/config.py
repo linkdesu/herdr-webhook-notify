@@ -8,9 +8,10 @@ from dataclasses import dataclass, field
 from difflib import get_close_matches
 from pathlib import Path
 
-from . import _toml, i18n, providers
+from . import _toml, i18n, owners, providers
 
 ENV_PATTERN = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}")
+OWNER_PATTERN = re.compile(r"[a-z][a-z0-9]*")
 CONFIG_NAME = "config.toml"
 SUPPORTED_EVENTS = ("done", "blocked", "unknown", "exited")
 
@@ -35,10 +36,11 @@ DEFAULTS = {
     "messages": {},
     "http": {"timeout_seconds": 5, "retries": 1},
     "providers": {},
+    "owners": {},
 }
 
 # Keys the plugin understands, used to report typos instead of ignoring them.
-TOP_LEVEL_KEYS = ("language", "notify", "http", "message", "messages", "providers")
+TOP_LEVEL_KEYS = ("language", "notify", "http", "message", "messages", "providers", "owners")
 NOTIFY_KEYS = tuple(DEFAULTS["notify"])
 HTTP_KEYS = tuple(DEFAULTS["http"])
 MESSAGE_KEYS = ("title", "body")
@@ -59,6 +61,7 @@ class Config:
     message: dict = field(default_factory=dict)
     messages: dict = field(default_factory=dict)
     providers: dict = field(default_factory=dict)
+    owners: dict = field(default_factory=dict)
     enabled: list = field(default_factory=list)
     unknown_keys: list = field(default_factory=list)
     warnings: list = field(default_factory=list)
@@ -229,6 +232,15 @@ def _unknown_keys(raw, provider_tables) -> list:
                 if key not in known:
                     note(f"providers.{name}", key, known)
 
+    owner_tables = raw.get("owners")
+    if isinstance(owner_tables, dict):
+        for name, options in owner_tables.items():
+            if not isinstance(options, dict):
+                continue
+            for key in options:
+                if key not in owners.CONFIG_KEYS:
+                    note(f"owners.{name}", key, owners.CONFIG_KEYS)
+
     return found
 
 
@@ -342,6 +354,35 @@ def load(explicit=None) -> Config:
             config.enabled.append(name)
 
     config.unknown_keys = _unknown_keys(raw, raw.get("providers") if isinstance(raw, dict) else None)
+
+    owner_tables = merged.get("owners") or {}
+    if not isinstance(owner_tables, dict):
+        raise ConfigError("owners: expected a table")
+    config.owners = {}
+    for name, options in owner_tables.items():
+        if not OWNER_PATTERN.fullmatch(str(name)):
+            raise ConfigError(
+                f"owners.{name}: owner names must match [a-z][a-z0-9]*,"
+                " for example [owners.cto] for agent names like cto--hwn"
+            )
+        if not isinstance(options, dict):
+            raise ConfigError(f"owners.{name}: expected a table")
+        url = str(options.get("url") or "").strip()
+        if not url:
+            # A half-filled .env must not take the whole plugin down; the route
+            # simply stays idle until the variable is set.
+            config.warnings.append(f"owners.{name}: url is empty, this route is disabled")
+            continue
+        header = str(options.get("header") or "").strip()
+        # A ${VAR} that no .env provides stays unresolved on purpose: the
+        # missing_env warning covers it and providers must keep working.
+        if header and not ENV_PATTERN.search(header):
+            try:
+                owners.parse_header(header)
+            except ValueError as exc:
+                raise ConfigError(f"owners.{name}.header: {exc}") from exc
+        config.owners[name] = {"url": url, "header": header}
+
     for key in config.unknown_keys:
         config.warnings.append(f"unknown config key: {key}")
 
@@ -352,7 +393,7 @@ def load(explicit=None) -> Config:
         except Exception as exc:  # ProviderError and friends
             raise ConfigError(str(exc)) from exc
 
-    if not config.enabled:
+    if not config.enabled and not config.owners:
         config.warnings.append(
             "no provider is enabled, run 'init' and set enabled = true for at least one provider"
         )

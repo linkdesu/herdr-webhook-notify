@@ -54,6 +54,22 @@ def tabs() -> list:
     return _items(cli_json(["tab", "list"]), "tabs")
 
 
+def agents() -> list:
+    # Fresh on every call: a renamed agent must not keep its old owner route.
+    return _items(cli_json(["agent", "list"], fresh=True), "agents")
+
+
+def agent_name(pane_id: str) -> str:
+    """Return the Herdr agent name of one pane, empty when it is unknown."""
+    if not pane_id:
+        return ""
+    for item in agents():
+        if isinstance(item, dict) and item.get("pane_id") == pane_id:
+            name = item.get("name")
+            return name.strip() if isinstance(name, str) else ""
+    return ""
+
+
 def pane(pane_id: str) -> dict:
     for item in panes():
         if isinstance(item, dict) and item.get("pane_id") == pane_id:

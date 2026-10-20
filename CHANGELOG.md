@@ -8,6 +8,16 @@ All notable changes to this project are documented here. The format follows
 
 ### Added
 
+- `[owners.<name>]` routes: one generic webhook per owner, hit only by sessions
+  whose Herdr agent name is `<owner>--<rest>` (owner matching
+  `[a-z][a-z0-9]*`), for example `cto--hwn`. The agent name is read from the
+  Herdr CLI by pane id. Sessions without the prefix, and sessions whose prefix
+  has no table, are never sent by this path; enabled providers keep working
+  unchanged. `url` and `header` may reference `.env` values as `${VAR}`, and the
+  POST body carries `agent`, `owner`, `pane_id`, `workspace_id`, `status`,
+  `event`, `herdr_event` and `time`.
+- `test owner` / `test owner:name` and `preview owner` exercise owner routes;
+  `status` lists them.
 - `{repo}` and `{worktree}` placeholders, filled from the worktree Herdr
   reports for the workspace.
 - `docs/events.md`, covering hook payloads, invocation context and their limits.

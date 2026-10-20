@@ -10,3 +10,5 @@ dist/
 /state.json
 /config.toml
 /.env
+# Scratch space for local reports, never committed.
+/tmp/
