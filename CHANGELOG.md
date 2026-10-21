@@ -39,6 +39,10 @@ All notable changes to this project are documented here. The format follows
 
 ### Fixed
 
+- Webhook requests no longer follow redirects. urllib used to re-send the
+  request, `Authorization` header included, to whatever address a 3xx pointed
+  at, and downgrade a POST to a GET on 301/302/303. A 3xx is now a failure and
+  its `detail` carries the status code and the masked `Location`.
 - One failing destination no longer aborts the whole notification. `http.send`
   returns a failed result for invalid header values and invalid URLs instead of
   raising (`urllib` raises `ValueError`), `deliver` and owner routing isolate

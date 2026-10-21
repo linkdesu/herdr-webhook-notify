@@ -12,6 +12,21 @@ from dataclasses import dataclass
 RETRY_STATUSES = {408, 425, 429, 500, 502, 503, 504}
 
 
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    """Treat every 3xx as a failure: a webhook endpoint never redirects.
+
+    urllib's default handler would re-send the request, including an
+    ``Authorization`` header, to whatever address the response points at, and
+    downgrade a POST to a GET on 301/302/303.
+    """
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
+
+
+_OPENER = urllib.request.build_opener(_NoRedirect)
+
+
 @dataclass
 class Response:
     ok: bool
@@ -66,7 +81,7 @@ def send(url: str, body: bytes, headers: dict, timeout: float = 5, retries: int 
     while True:
         try:
             request = urllib.request.Request(url, data=body, headers=dict(headers or {}), method=method)
-            with urllib.request.urlopen(request, timeout=timeout) as response:
+            with _OPENER.open(request, timeout=timeout) as response:
                 payload = response.read().decode("utf-8", "replace")
                 return Response(True, response.status, payload, "")
         except (ValueError, http.client.HTTPException) as exc:
@@ -79,6 +94,12 @@ def send(url: str, body: bytes, headers: dict, timeout: float = 5, retries: int 
                 detail = exc.read().decode("utf-8", "replace")[:400]
             except Exception:  # pragma: no cover - body may be unreadable
                 detail = ""
+            if 300 <= exc.code < 400:
+                location = (exc.headers.get("Location", "") if exc.headers else "") or ""
+                where = redact(location) if "://" in location else "<relative location>"
+                return Response(
+                    False, exc.code, detail, f"HTTP {exc.code} redirect to {where} (not followed)"
+                )
             if exc.code in RETRY_STATUSES and attempt < retries:
                 attempt += 1
                 time.sleep(0.5 * attempt)
