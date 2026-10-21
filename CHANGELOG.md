@@ -37,6 +37,12 @@ All notable changes to this project are documented here. The format follows
 - Unknown config keys are reported with a suggested spelling, in `status` and in
   the hook log, instead of being ignored.
 
+### Changed
+
+- `preview`, `status` and the logs print a webhook URL as scheme and host only
+  (`https://api.telegram.org/***`). Redacting just the last path segment kept
+  the Telegram bot token, which sits in the second-to-last one.
+
 ### Fixed
 
 - Webhook requests no longer follow redirects. urllib used to re-send the

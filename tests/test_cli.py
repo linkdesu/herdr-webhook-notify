@@ -561,3 +561,18 @@ def test_notify_finishes_after_a_provider_fails_to_send(
     assert [request["path"] for request in webhook_server.requests] == ["/hook/test"]
     state = json.loads((Path(isolated_env["state_dir"]) / "state.json").read_text(encoding="utf-8"))
     assert state["panes"]["wD:p1"]["last_notified"]["done"]
+
+
+def test_preview_hides_a_token_in_the_middle_of_the_url(isolated_env, capsys):
+    text = """
+[providers.telegram]
+enabled = true
+bot_token = "123456789:AAFakeTokenValueHere"
+chat_id = "42"
+"""
+    (Path(isolated_env["config_dir"]) / "config.toml").write_text(text, encoding="utf-8")
+
+    assert cli.main(["preview", "telegram"]) == 0
+    output = capsys.readouterr().out
+    assert "https://api.telegram.org/***" in output
+    assert "AAFakeTokenValueHere" not in output

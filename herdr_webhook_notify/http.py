@@ -36,20 +36,19 @@ class Response:
 
 
 def redact(url: str) -> str:
-    """Hide the secret part of a webhook URL before logging it."""
+    """Keep only the scheme and host: a webhook path is a credential too.
+
+    The token of ``https://api.telegram.org/bot<token>/sendMessage`` sits in the
+    middle of the path, so no path segment may survive.
+    """
     try:
         parsed = urllib.parse.urlsplit(url)
     except ValueError:
         return "<invalid url>"
-    path = parsed.path
-    segments = [segment for segment in path.split("/") if segment]
-    if segments:
-        segments[-1] = "***"
-    query = urllib.parse.parse_qsl(parsed.query, keep_blank_values=True)
-    hidden = "&".join(f"{key}=***" for key, _ in query)
-    return urllib.parse.urlunsplit(
-        (parsed.scheme, parsed.netloc, "/" + "/".join(segments), hidden, "")
-    )
+    host = parsed.netloc.rsplit("@", 1)[-1]
+    if not parsed.scheme or not host:
+        return "<invalid url>"
+    return f"{parsed.scheme}://{host}/***"
 
 
 def single_line(text) -> str:

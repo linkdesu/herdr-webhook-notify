@@ -353,7 +353,9 @@ description = "test webhook notify"
 - Requests are retried on 408/425/429/5xx with a small backoff.
 - Notifications that still fail are stored in the plugin state directory and
   retried on the next event, up to three attempts.
-- Token-ish parts of webhook URLs are redacted in logs and in `status` output.
+- Webhook URLs are printed as scheme and host only, for example
+  `https://api.telegram.org/***`: logs, `preview` and `status` never show the
+  path or the query string, and credential headers are masked.
 
 Inspect what actually ran:
 

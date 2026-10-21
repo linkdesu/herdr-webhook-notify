@@ -90,3 +90,23 @@ def test_redirect_is_not_followed():
         assert "302" in response.error
         assert "not followed" in response.error
         assert str(sink.server_port) in response.error
+
+
+def test_redact_keeps_scheme_and_host_only():
+    assert http.redact("https://hook.example.test/a/b?token=s3cret") == "https://hook.example.test/***"
+
+
+def test_redact_hides_tokens_in_the_middle_of_the_path():
+    redacted = http.redact("https://api.telegram.org/bot123456789:AAFakeTokenValueHere/sendMessage")
+    assert redacted == "https://api.telegram.org/***"
+    assert "AAFakeTokenValueHere" not in redacted
+
+
+def test_redact_keeps_the_port_and_masks_the_authority_credentials():
+    assert http.redact("http://127.0.0.1:8080/hook/tok") == "http://127.0.0.1:8080/***"
+    assert http.redact("https://user:pw@hook.example.test/tok") == "https://hook.example.test/***"
+
+
+def test_redact_rejects_a_url_without_scheme_or_host():
+    assert http.redact("notaurl") == "<invalid url>"
+    assert http.redact("http://[::1") == "<invalid url>"

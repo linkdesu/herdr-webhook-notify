@@ -301,7 +301,7 @@ owner 路由与服务商共用 `[notify]` 过滤器和 `[http]` 超时/重试；
 - hook 不会阻塞 Herdr：短超时、退出码 0、错误只写 stderr。
 - 408/425/429/5xx 会做有限重试。
 - 仍失败的通知会落到插件状态目录，下一次事件时重投，最多三次。
-- 日志和 `status` 输出会隐藏 webhook URL 中的密钥片段。
+- webhook URL 只打印 scheme 和 host，例如 `https://api.telegram.org/***`：日志、`preview` 和 `status` 都不会出现路径与查询参数，凭据类请求头显示为 `***`。
 - 配置里写错的键不会被静默忽略：`status` 和 hook 日志会提示 `unknown config key` 并给出拼写建议。
 
 查看实际执行记录：
