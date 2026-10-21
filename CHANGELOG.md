@@ -4,7 +4,11 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project uses
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.1.1] - 2026-10-21
+
+Security release: one failing channel can no longer abort a notification, a
+redirect can no longer forward an `Authorization` header to another host, and
+webhook URLs are masked down to their scheme and host.
 
 ### Added
 
@@ -83,5 +87,6 @@ All notable changes to this project are documented here. The format follows
 - Bounded retries plus a persisted queue for failed deliveries.
 - 70 tests, ruff linting, CI matrix over Linux/macOS/Windows and Python 3.9/3.12.
 
-[Unreleased]: https://github.com/zgxme/herdr-webhook-notify/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/zgxme/herdr-webhook-notify/compare/v0.1.1...HEAD
+[0.1.1]: https://github.com/zgxme/herdr-webhook-notify/releases/tag/v0.1.1
 [0.1.0]: https://github.com/zgxme/herdr-webhook-notify/releases/tag/v0.1.0
