@@ -39,6 +39,11 @@ All notable changes to this project are documented here. The format follows
 
 ### Fixed
 
+- One failing destination no longer aborts the whole notification. `http.send`
+  returns a failed result for invalid header values and invalid URLs instead of
+  raising (`urllib` raises `ValueError`), `deliver` and owner routing isolate
+  each target, and ntfy strips CR/LF from the `Title` header it builds from the
+  terminal title.
 - `providers.generic.method` is honoured. It was validated but ignored, so
   `PUT` and `PATCH` were sent as `POST`. Queued notifications keep their method
   when they are replayed.

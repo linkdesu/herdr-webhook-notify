@@ -327,3 +327,13 @@ def test_unknown_owner_key_is_reported(tmp_path):
     cfg = config_mod.load(str(path))
     joined = " | ".join(cfg.unknown_keys)
     assert "owners.cto.headr" in joined and "header" in joined
+
+
+def test_owner_route_with_a_broken_url_reports_a_failure(isolated_env, capsys):
+    text = '[owners.cto]\nurl = "notaurl"\n'
+    write_config(isolated_env["config_dir"], text)
+
+    assert cli.main(["test", "owner"]) == 1
+    output = capsys.readouterr().out
+    assert "FAIL owner:cto" in output
+    assert "notaurl" in output

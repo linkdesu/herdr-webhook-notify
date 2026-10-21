@@ -238,14 +238,18 @@ def deliver(cfg, kind: str, status: str, fields: dict, timestamp: int, only=None
             results.append((name, False, None, f"build failed: {exc}"))
             continue
 
-        response = http.send(
-            delivery.url,
-            delivery.body,
-            delivery.headers,
-            timeout=timeout,
-            retries=retries,
-            method=delivery.method,
-        )
+        try:
+            response = http.send(
+                delivery.url,
+                delivery.body,
+                delivery.headers,
+                timeout=timeout,
+                retries=retries,
+                method=delivery.method,
+            )
+        except Exception as exc:  # one broken channel must not stop the others
+            results.append((name, False, None, f"send failed: {exc}"))
+            continue
         if response.ok:
             results.append((name, True, response.status, response.body[:200]))
         else:

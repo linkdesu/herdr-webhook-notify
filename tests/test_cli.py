@@ -513,3 +513,51 @@ webhook_url = "{webhook_url(webhook_server)}"
     send_event(monkeypatch, "pane.agent_status_changed", status_event("done"))
     assert len(webhook_server.requests) == 1
     assert "unknown key notify.cooldown_second" in capsys.readouterr().err
+
+
+BROKEN_FIRST_CONFIG = """
+[http]
+retries = 0
+
+[providers.generic]
+enabled = true
+url = "{base}/generic"
+headers = {{ X-Bad = "v\\r\\nX-Evil: 1" }}
+
+[providers.feishu]
+enabled = true
+webhook_url = "{url}"
+"""
+
+
+def broken_first_config(server) -> str:
+    return BROKEN_FIRST_CONFIG.format(
+        base=f"http://127.0.0.1:{server.server_port}", url=webhook_url(server)
+    )
+
+
+def test_one_broken_provider_does_not_stop_the_others(isolated_env, webhook_server, capsys):
+    (Path(isolated_env["config_dir"]) / "config.toml").write_text(
+        broken_first_config(webhook_server), encoding="utf-8"
+    )
+
+    assert cli.main(["test"]) == 1
+    output = capsys.readouterr().out
+    assert "FAIL generic" in output
+    assert "Invalid header value" in output
+    assert "OK   feishu (HTTP 200)" in output
+    assert [request["path"] for request in webhook_server.requests] == ["/hook/test"]
+
+
+def test_notify_finishes_after_a_provider_fails_to_send(
+    isolated_env, webhook_server, monkeypatch
+):
+    (Path(isolated_env["config_dir"]) / "config.toml").write_text(
+        broken_first_config(webhook_server), encoding="utf-8"
+    )
+
+    send_event(monkeypatch, "pane.agent_status_changed", status_event("working"))
+    assert send_event(monkeypatch, "pane.agent_status_changed", status_event("idle")) == 0
+    assert [request["path"] for request in webhook_server.requests] == ["/hook/test"]
+    state = json.loads((Path(isolated_env["state_dir"]) / "state.json").read_text(encoding="utf-8"))
+    assert state["panes"]["wD:p1"]["last_notified"]["done"]

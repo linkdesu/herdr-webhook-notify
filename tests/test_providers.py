@@ -173,3 +173,13 @@ def test_generic_custom_body_template():
         {"url": "https://example.com/hook", "body": "task={task}\nkeep={unknown}"}, message()
     )
     assert delivery.body.decode() == "task={task}\nkeep={unknown}"
+
+
+def test_ntfy_strips_newlines_from_the_title():
+    module = providers.get("ntfy")
+    msg = message()
+    msg.title = "Task finished\r\nX-Evil: 1"
+    delivery = module.build({"topic": "alerts"}, msg)
+    assert "\r" not in delivery.headers["Title"]
+    assert "\n" not in delivery.headers["Title"]
+    assert delivery.headers["Title"].startswith("Task finished")

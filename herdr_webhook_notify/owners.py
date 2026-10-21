@@ -94,14 +94,17 @@ def deliver(cfg, kind: str, status: str, fields: dict, agent_name: str, now: flo
         delivery = build(owner, options, body)
     except ValueError as exc:
         return [(owner, False, None, f"invalid header: {exc}")]
-    response = http.send(
-        delivery.url,
-        delivery.body,
-        delivery.headers,
-        timeout=float(cfg.http.get("timeout_seconds", 5)),
-        retries=int(cfg.http.get("retries", 1)),
-        method=delivery.method,
-    )
+    try:
+        response = http.send(
+            delivery.url,
+            delivery.body,
+            delivery.headers,
+            timeout=float(cfg.http.get("timeout_seconds", 5)),
+            retries=int(cfg.http.get("retries", 1)),
+            method=delivery.method,
+        )
+    except Exception as exc:  # an owner route must not abort the other channels
+        return [(owner, False, None, f"send failed: {exc}")]
     if response.ok:
         return [(owner, True, response.status, response.body[:200])]
     return [(owner, False, response.status, response.error or response.body)]

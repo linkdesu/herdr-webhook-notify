@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import http.client
 import time
 import urllib.error
 import urllib.parse
@@ -36,6 +37,15 @@ def redact(url: str) -> str:
     )
 
 
+def single_line(text) -> str:
+    """Collapse line breaks so a value can travel as one HTTP header.
+
+    Titles come from terminal titles and agent names, and a stray CR/LF makes
+    urllib reject the whole request, so providers clean header values here.
+    """
+    return " ".join(part.strip() for part in str(text).splitlines() if part.strip())
+
+
 SENSITIVE_HEADER_HINTS = ("authorization", "cookie", "token", "secret", "key", "password")
 
 
@@ -54,11 +64,15 @@ def redact_headers(headers: dict) -> dict:
 def send(url: str, body: bytes, headers: dict, timeout: float = 5, retries: int = 1, method: str = "POST") -> Response:
     attempt = 0
     while True:
-        request = urllib.request.Request(url, data=body, headers=dict(headers or {}), method=method)
         try:
+            request = urllib.request.Request(url, data=body, headers=dict(headers or {}), method=method)
             with urllib.request.urlopen(request, timeout=timeout) as response:
                 payload = response.read().decode("utf-8", "replace")
                 return Response(True, response.status, payload, "")
+        except (ValueError, http.client.HTTPException) as exc:
+            # Invalid header values, invalid URLs and malformed responses: a
+            # retry cannot help, and one bad target must not stop the others.
+            return Response(False, None, "", str(exc))
         except urllib.error.HTTPError as exc:  # server answered with an error status
             detail = ""
             try:

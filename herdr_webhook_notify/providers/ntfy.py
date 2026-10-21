@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from .. import http
 from .base import Delivery, option, require
 
 NAME = "ntfy"
@@ -25,7 +26,7 @@ def build(options: dict, message) -> Delivery:
     server = option(options, "url", DEFAULT_SERVER).rstrip("/")
     url = f"{server}/{option(options, 'topic')}"
     headers = {
-        "Title": message.title[:250],
+        "Title": http.single_line(message.title)[:250],
         "Priority": option(options, "priority") or _PRIORITY.get(message.kind, "default"),
         "Content-Type": "text/plain; charset=utf-8",
     }
